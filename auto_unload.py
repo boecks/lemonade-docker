@@ -77,8 +77,23 @@ def run():
             if api_last_use > seen_at[name]:
                 seen_at[name] = api_last_use
 
+            # last_use vom Server hat Vorrang - aktualisiert sich bei jedem Request
+            if api_last_use > seen_at[name]:
+                seen_at[name] = api_last_use
+
             idle = now - seen_at[name]
+
             if idle >= IDLE_SECONDS:
+                # Sicherheitscheck: last_use nochmal frisch holen kurz vor Unload
+                fresh = api("/api/v1/health")
+                if fresh:
+                    fresh_loaded = {m["model_name"]: m for m in fresh.get("all_models_loaded", [])}
+                    if name in fresh_loaded:
+                        fresh_last_use = fresh_loaded[name].get("last_use", 0)
+                        if fresh_last_use > seen_at[name]:
+                            seen_at[name] = fresh_last_use
+                            log(f"'{name}' activity detected just before unload, resetting timer")
+                            continue
                 log(f"unloading '{name}' (idle {idle:.0f}s)")
                 api("/api/v1/unload", {"model_name": name})
                 del seen_at[name]
