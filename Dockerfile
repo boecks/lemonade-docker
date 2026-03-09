@@ -8,6 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     curl \
     libgomp1 \
+    libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 
 # .deb herunterladen und installieren - enthält WebApp + lemonade-server binary
@@ -29,6 +30,7 @@ ENV LEMONADE_HOST=0.0.0.0
 ENV LEMONADE_PORT=8000
 # ROCm-Backend für RDNA4 / RX 9700 AI Pro
 ENV LEMONADE_LLAMACPP=rocm
+ENV LEMONADE_LLAMACPP_ARGS="--flash-attn on --no-mmap"
 # Kontext-Größe - anpassen nach Bedarf (4k=4096, 32k=32768, 128k=131072)
 ENV LEMONADE_CTX_SIZE=8192
 
