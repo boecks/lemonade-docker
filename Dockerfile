@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     libgomp1 \
     libatomic1 \
+    moreutils \
     && rm -rf /var/lib/apt/lists/*
 
 # .deb herunterladen und installieren - enthält WebApp + lemonade-server binary
