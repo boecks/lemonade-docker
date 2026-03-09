@@ -43,6 +43,10 @@ def run():
 
     print(f"[auto-unload] idle timeout: {IDLE_SECONDS}s, check every {CHECK_INTERVAL}s", flush=True)
 
+    # last_use pro Modell tracken – wird beim ersten Sehen auf now() gesetzt
+    # und nur durch einen echten API-Timestamp überschrieben wenn dieser neuer ist
+    seen_at = {}  # model_name -> timestamp wann wir es zuerst gesehen haben
+
     while True:
         time.sleep(CHECK_INTERVAL)
         health = api("/api/v1/health")
@@ -50,12 +54,31 @@ def run():
             continue
 
         now = time.time()
-        for model in health.get("all_models_loaded", []):
-            name = model["model_name"]
-            idle = now - model.get("last_use", now)
+        loaded = {m["model_name"]: m for m in health.get("all_models_loaded", [])}
+
+        # Nicht mehr geladene Modelle aus seen_at entfernen
+        for name in list(seen_at):
+            if name not in loaded:
+                del seen_at[name]
+
+        for name, model in loaded.items():
+            api_last_use = model.get("last_use", 0)
+
+            if name not in seen_at:
+                # Modell zum ersten Mal gesehen – jetzt als Referenz setzen
+                seen_at[name] = now
+                print(f"[auto-unload] tracking '{name}' (first seen)", flush=True)
+                continue
+
+            # Wenn last_use neuer ist als seen_at, echte Aktivität -> updaten
+            if api_last_use > seen_at[name]:
+                seen_at[name] = api_last_use
+
+            idle = now - seen_at[name]
             if idle >= IDLE_SECONDS:
                 print(f"[auto-unload] unloading '{name}' (idle {idle:.0f}s)", flush=True)
                 api("/api/v1/unload", {"model_name": name})
+                del seen_at[name]
 
 if __name__ == "__main__":
     run()
