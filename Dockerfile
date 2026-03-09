@@ -3,13 +3,11 @@ FROM ubuntu:24.04
 ARG LEMONADE_VERSION=9.4.1
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Laufzeit-Deps: ROCm-fähige Vulkan-Treiber + GoMP (OpenMP)
+# Minimale Laufzeit-Deps - ROCm kommt vom Host via /dev/kfd + /dev/dri,
+# das .deb bundled seine eigenen ROCm-Libs
 RUN apt-get update && apt-get install -y \
     curl \
-    unzip \
     libgomp1 \
-    libvulkan1 \
-    mesa-vulkan-drivers \
     && rm -rf /var/lib/apt/lists/*
 
 # .deb herunterladen und installieren - enthält WebApp + lemonade-server binary
