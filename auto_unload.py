@@ -50,7 +50,10 @@ def run():
 
     log(f"idle timeout: {IDLE_SECONDS}s, check every {CHECK_INTERVAL}s")
 
-    seen_at = {}  # model_name -> last activity timestamp
+    # last_use-Wert beim ersten Sehen des Modells (= Ladezeit-Baseline)
+    last_use_at_load = {}  # model_name -> last_use beim ersten Tracking-Check
+    # last_use nach erstem abgeschlossenem Request (Idle-Timer läuft ab hier)
+    seen_at = {}           # model_name -> last_use des letzten abgeschlossenen Requests
 
     while True:
         time.sleep(CHECK_INTERVAL)
@@ -65,38 +68,37 @@ def run():
         for name in list(seen_at):
             if name not in loaded:
                 del seen_at[name]
+        for name in list(last_use_at_load):
+            if name not in loaded:
+                del last_use_at_load[name]
 
         for name, model in loaded.items():
             api_last_use = model.get("last_use", 0)
 
-            if name not in seen_at:
-                seen_at[name] = max(api_last_use, now)
-                log(f"tracking '{name}'")
+            if name not in last_use_at_load:
+                # Erstes Mal gesehen: last_use-Baseline merken (= Ladezeit-Timestamp)
+                last_use_at_load[name] = api_last_use
+                log(f"tracking '{name}' (baseline last_use={api_last_use:.0f}, waiting for first request...)")
                 continue
 
-            if api_last_use > seen_at[name]:
-                seen_at[name] = api_last_use
+            if name not in seen_at:
+                # Warten auf ersten abgeschlossenen Request
+                if api_last_use > last_use_at_load[name]:
+                    # last_use hat sich verändert → erster Request abgeschlossen
+                    seen_at[name] = api_last_use
+                    log(f"tracking '{name}' (first request completed, idle timer started)")
+                continue
 
-            # last_use vom Server hat Vorrang - aktualisiert sich bei jedem Request
+            # Normaler Betrieb: last_use aktualisieren wenn neuer Request abgeschlossen
             if api_last_use > seen_at[name]:
                 seen_at[name] = api_last_use
 
             idle = now - seen_at[name]
-
             if idle >= IDLE_SECONDS:
-                # Sicherheitscheck: last_use nochmal frisch holen kurz vor Unload
-                fresh = api("/api/v1/health")
-                if fresh:
-                    fresh_loaded = {m["model_name"]: m for m in fresh.get("all_models_loaded", [])}
-                    if name in fresh_loaded:
-                        fresh_last_use = fresh_loaded[name].get("last_use", 0)
-                        if fresh_last_use > seen_at[name]:
-                            seen_at[name] = fresh_last_use
-                            log(f"'{name}' activity detected just before unload, resetting timer")
-                            continue
                 log(f"unloading '{name}' (idle {idle:.0f}s)")
                 api("/api/v1/unload", {"model_name": name})
                 del seen_at[name]
+                del last_use_at_load[name]
 
 if __name__ == "__main__":
     run()
