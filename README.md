@@ -1,17 +1,23 @@
-TODO
+Problem Summary: auto_unload.py – zwei Bugs
+Bug 1: Timer startet zu früh
 
-Problem Summary: auto_unload.py – Idle Timer Race Condition
-Ziel: Idle-Timer soll erst nach dem ersten abgeschlossenen Request starten, nicht ab Ladezeit.
-Beobachtung:
+last_use im /api/v1/health wird beim Laden gesetzt und aktualisiert sich nach Requests nicht zuverlässig
+Timer läuft ab Ladezeit statt ab letztem abgeschlossenem Request
+last_use-Baseline-Ansatz scheitert daran
 
-last_use im /api/v1/health Response wird beim Laden des Modells gesetzt und aktualisiert sich nach abgeschlossenen Requests nicht zuverlässig – der Wert bleibt auf dem Ladezeit-Timestamp stehen
-Dadurch kann nicht unterschieden werden ob last_use vom Ladevorgang oder von einem echten Request stammt
-Lemonade schützt laufende Inferences vor Eviction (dokumentiert + bestätigt im Log) – der Unload wartet bis die Generation fertig ist, aber der Timer läuft trotzdem ab Ladezeit
+Bug 2: Timer resettet nicht bei erneutem Prompt
+
+Wenn User vor Timeout nochmal promptet, müsste der Idle-Timer zurückgesetzt werden
+Passiert nicht weil last_use sich nicht ändert – der Unloader "sieht" den neuen Request nicht
+Beide Bugs haben dieselbe Wurzel: last_use ist unzuverlässig
 
 Letzter Stand:
 
-last_use-Baseline-Ansatz: funktioniert nicht weil last_use sich nicht verändert
-/api/v1/stats mit output_tokens-Fingerprint: noch ungetestet, vielversprechend aber unklar ob output_tokens sich zuverlässig nach jedem Request ändert
+/api/v1/stats mit output_tokens-Fingerprint implementiert – löst theoretisch beide Bugs auf einmal weil jeder abgeschlossene Request output_tokens verändert und den Timer zurücksetzt
+Noch ungetestet
 
-Offene Frage an Lemonade:
-Gibt es einen zuverlässigen API-Indikator für "Request gerade aktiv" oder "letzter Request abgeschlossen um Zeitpunkt X"? Der last_use-Wert im Health-Endpoint scheint broken zu sein.
+Offene Frage an Lemonade-Team:
+
+Ist last_use im Health-Endpoint intentionally nur der Ladezeit-Timestamp?
+Gibt es einen zuverlässigen "letzter Request abgeschlossen"-Indikator?
+Ändert sich output_tokens in /api/v1/stats nach jedem abgeschlossenen Request kumulativ?
