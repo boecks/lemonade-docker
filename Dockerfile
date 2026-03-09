@@ -31,7 +31,7 @@ ENV LEMONADE_PORT=8000
 # ROCm-Backend für RDNA4 / RX 9700 AI Pro
 ENV LEMONADE_LLAMACPP=rocm
 ENV LEMONADE_LLAMACPP_ARGS="--flash-attn on --no-mmap"
-# 0 = disabled, >0 = idle timeout in Minuten
+# 0 = disabled, sonst z.B. 10m, 600s, 1h
 ENV LEMONADE_KEEPALIVE=0
 
 COPY auto_unload.py /opt/auto_unload.py
