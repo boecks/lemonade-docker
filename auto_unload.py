@@ -5,7 +5,21 @@ Läuft als Hintergrundprozess im Container.
 """
 import os, time, json, urllib.request, urllib.error
 
-IDLE_SECONDS = int(os.environ.get("LEMONADE_KEEPALIVE", 0)) * 60
+def parse_duration(s):
+    """Parse duration string: 10m, 600s, 1h, 90 -> seconds. 0 or empty -> disabled."""
+    if not s or s.strip() in ("0", ""):
+        return 0
+    s = s.strip()
+    try:
+        if s.endswith("h"):  return int(s[:-1]) * 3600
+        if s.endswith("m"):  return int(s[:-1]) * 60
+        if s.endswith("s"):  return int(s[:-1])
+        return int(s)  # plain number = seconds
+    except ValueError:
+        print(f"[auto-unload] invalid LEMONADE_KEEPALIVE value: {s!r}, disabled.", flush=True)
+        return 0
+
+IDLE_SECONDS = parse_duration(os.environ.get("LEMONADE_KEEPALIVE", "0"))
 URL = "http://127.0.0.1:" + os.environ.get("LEMONADE_PORT", "8000")
 CHECK_INTERVAL = 30
 
