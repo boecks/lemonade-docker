@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
     mesa-vulkan-drivers \
     && rm -rf /var/lib/apt/lists/*
 
-# .deb herunterladen und installieren – enthält WebApp + lemonade-server binary
+# .deb herunterladen und installieren - enthält WebApp + lemonade-server binary
 RUN curl -L -o /tmp/lemonade.deb \
     "https://github.com/lemonade-sdk/lemonade/releases/download/v${LEMONADE_VERSION}/lemonade-server_${LEMONADE_VERSION}_amd64.deb" \
     && apt-get update \
@@ -31,7 +31,7 @@ ENV LEMONADE_HOST=0.0.0.0
 ENV LEMONADE_PORT=8000
 # ROCm-Backend für RDNA4 / RX 9700 AI Pro
 ENV LEMONADE_LLAMACPP=rocm
-# Kontext-Größe – anpassen nach Bedarf (4k=4096, 32k=32768, 128k=131072)
+# Kontext-Größe - anpassen nach Bedarf (4k=4096, 32k=32768, 128k=131072)
 ENV LEMONADE_CTX_SIZE=8192
 
 # Health check
