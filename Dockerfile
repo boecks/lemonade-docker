@@ -3,7 +3,7 @@ FROM ubuntu:24.04
 ARG LEMONADE_VERSION=9.4.1
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Minimale Laufzeit-Deps – ROCm kommt vom Host via /dev/kfd + /dev/dri,
+# Minimale Laufzeit-Deps - ROCm kommt vom Host via /dev/kfd + /dev/dri,
 # das .deb bundled seine eigenen ROCm-Libs
 RUN apt-get update && apt-get install -y \
     curl \
@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 
-# .deb herunterladen und installieren – enthält WebApp + lemonade-server binary
+# .deb herunterladen und installieren - enthält WebApp + lemonade-server binary
 RUN curl -L -o /tmp/lemonade.deb \
     "https://github.com/lemonade-sdk/lemonade/releases/download/v${LEMONADE_VERSION}/lemonade-server_${LEMONADE_VERSION}_amd64.deb" \
     && apt-get update \
@@ -35,7 +35,7 @@ ENV LEMONADE_LLAMACPP_ARGS="--flash-attn on --no-mmap"
 ENV LEMONADE_KEEPALIVE=0
 
 COPY auto_unload.py /opt/auto_unload.py
-# Kontext-Größe – anpassen nach Bedarf (4k=4096, 32k=32768, 128k=131072)
+# Kontext-Größe - anpassen nach Bedarf (4k=4096, 32k=32768, 128k=131072)
 ENV LEMONADE_CTX_SIZE=8192
 
 # Health check
