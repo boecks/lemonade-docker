@@ -43,7 +43,7 @@ def run():
 
     print(f"[auto-unload] idle timeout: {IDLE_SECONDS}s, check every {CHECK_INTERVAL}s", flush=True)
 
-    # last_use pro Modell tracken – wird beim ersten Sehen auf now() gesetzt
+    # last_use pro Modell tracken - wird beim ersten Sehen auf now() gesetzt
     # und nur durch einen echten API-Timestamp überschrieben wenn dieser neuer ist
     seen_at = {}  # model_name -> timestamp wann wir es zuerst gesehen haben
 
@@ -65,7 +65,7 @@ def run():
             api_last_use = model.get("last_use", 0)
 
             if name not in seen_at:
-                # Modell zum ersten Mal gesehen – jetzt als Referenz setzen
+                # Modell zum ersten Mal gesehen - jetzt als Referenz setzen
                 seen_at[name] = now
                 print(f"[auto-unload] tracking '{name}' (first seen)", flush=True)
                 continue
