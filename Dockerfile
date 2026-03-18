@@ -1,6 +1,6 @@
 FROM ubuntu:24.04
 
-ARG LEMONADE_VERSION=9.4.1
+ARG LEMONADE_VERSION=10.0.0
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Minimale Laufzeit-Deps - ROCm kommt vom Host via /dev/kfd + /dev/dri,
