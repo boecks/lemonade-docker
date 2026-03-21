@@ -5,7 +5,7 @@ services:
     container_name: lemonade-server
     build: .
     # Or use a pre-built image:
-    # image: ghcr.io/YOUR_USER/lemonade-docker:latest
+    # image: ghcr.io/boecks/lemonade-docker:latest
     restart: unless-stopped
     ports:
       - 8000:8000
