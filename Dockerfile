@@ -7,6 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Runtime dependencies only — ROCm comes from the host via /dev/kfd + /dev/dri,
 # the .deb bundles its own ROCm libs
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
         curl \
         libgomp1 \
         libatomic1 \
