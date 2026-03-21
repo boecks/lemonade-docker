@@ -342,7 +342,8 @@ def run():
             # --- First time seeing this model ---
             if name not in tracked:
                 tracked[name] = {
-                    "last_activity": max(api_last_use, now),
+                    "last_activity": now,
+                    "prev_last_use": api_last_use,
                     "last_stats": sfp,
                     "idle_limit": idle_limit,
                 }
@@ -356,9 +357,12 @@ def run():
                 log(f"'{name}' keep_alive changed: {format_duration(info['idle_limit'])} -> {format_duration(idle_limit)}")
                 info["idle_limit"] = idle_limit
 
-            # --- Update last_activity from server's last_use ---
-            if api_last_use > info["last_activity"]:
-                info["last_activity"] = api_last_use
+            # --- last_use changed => model was just used ---
+            # last_use is a server uptime counter, NOT a unix timestamp.
+            # We only care if the value changed since last check.
+            if api_last_use != info["prev_last_use"]:
+                info["last_activity"] = now
+                info["prev_last_use"] = api_last_use
 
             # --- Stats changed => request just completed ---
             if sfp and info["last_stats"] and sfp != info["last_stats"]:
@@ -391,9 +395,10 @@ def run():
                 fl = {m["model_name"]: m for m in fresh.get("all_models_loaded", [])}
                 if name in fl:
                     fresh_lu = fl[name].get("last_use", 0)
-                    if fresh_lu > info["last_activity"]:
-                        info["last_activity"] = fresh_lu
-                        log(f"  '{name}' last_use updated, aborting unload")
+                    if fresh_lu != info["prev_last_use"]:
+                        info["last_activity"] = time.time()
+                        info["prev_last_use"] = fresh_lu
+                        log(f"  '{name}' last_use changed, aborting unload")
                         continue
 
             # Check 3: Wait, recheck slots + stats
