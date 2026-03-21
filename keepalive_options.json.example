@@ -1,0 +1,8 @@
+{
+  "_default": {
+    "keep_alive": "10m"
+  },
+  "Qwen3.5-35B-A3B-GGUF": {
+    "keep_alive": "30m"
+  }
+}
