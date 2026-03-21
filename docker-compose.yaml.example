@@ -1,0 +1,34 @@
+name: lemonade
+
+services:
+  lemonade-server:
+    container_name: lemonade-server
+    build: .
+    # Or use a pre-built image:
+    # image: ghcr.io/YOUR_USER/lemonade-docker:latest
+    restart: unless-stopped
+    ports:
+      - 8000:8000
+    volumes:
+      # Model cache (HuggingFace downloads)
+      - ./models:/models
+      # Lemonade config (keepalive_options.json, recipe_options.json)
+      - ./lemonade-data:/root/.cache/lemonade
+      # Optional: custom llama-server binary (e.g. ROCm build)
+      # - ./llamacpp:/backends
+    environment:
+      - HF_HOME=/models
+      - LEMONADE_HOST=0.0.0.0
+      - LEMONADE_PORT=8000
+      # GPU backend: rocm, vulkan, or omit for CPU
+      - LEMONADE_LLAMACPP=rocm
+      # Optional: custom llama-server binary path
+      # - LEMONADE_LLAMACPP_ROCM_BIN=/backends/rocm/llama-server
+      # Optional: global defaults (can also be set per-model in recipe_options.json)
+      # - LEMONADE_CTX_SIZE=8192
+      # - LEMONADE_LLAMACPP_ARGS=--flash-attn on --no-mmap
+    # AMD GPU passthrough (adjust for your system)
+    devices:
+      - /dev/kfd
+      - /dev/dri/renderD128
+      - /dev/dri/card0
