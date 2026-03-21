@@ -295,7 +295,7 @@ def run():
         for k, v in cfg.items():
             log(f"  {k}: {format_duration(v)}")
     elif ENV_DEFAULT <= 0:
-        log("no keepalive config found and LEMONADE_KEEPALIVE not set. Waiting for config...")
+        log("no config found yet, will poll until config file appears...")
 
     init_exclude_ports()
 
@@ -304,6 +304,11 @@ def run():
 
     while True:
         time.sleep(CHECK_INTERVAL)
+
+        # If no config exists yet, wait quietly until one appears
+        cfg_check = load_keepalive_config()
+        if not cfg_check and ENV_DEFAULT <= 0:
+            continue
 
         health = api("/api/v1/health")
         if not health:
