@@ -1,0 +1,14 @@
+# Docker compose (contains local paths)
+docker-compose.yml
+docker-compose.yaml
+compose.yaml
+compose.yaml
+
+# Local data
+models/
+lemonade-data/
+llamacpp/
+
+# OS
+.DS_Store
+Thumbs.db
