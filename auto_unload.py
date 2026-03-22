@@ -340,6 +340,7 @@ def run():
         # Clean up models no longer loaded
         for name in list(tracked):
             if name not in loaded:
+                log(f"'{name}' no longer loaded, removing from tracking")
                 del tracked[name]
 
         for name, model in loaded.items():
