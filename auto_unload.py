@@ -36,7 +36,7 @@ Special values:
   -1  = never unload (model stays loaded indefinitely)
   omit / no config = watchdog ignores the model (not tracked)
 """
-import os, time, json, urllib.request, urllib.error, re
+import os, time, json, hashlib, urllib.request, urllib.error, re
 from datetime import datetime
 from pathlib import Path
 
@@ -48,11 +48,18 @@ NEVER = -1
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
+def script_hash():
+    """Short hash of this script file for identifying deployed version."""
+    try:
+        data = Path(__file__).read_bytes()
+        return hashlib.sha256(data).hexdigest()[:8]
+    except Exception:
+        return "unknown"
+
 def ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-def log(msg):
-    print(f"[{ts()}] [auto-unload] {msg}", flush=True)
+
 
 # ---------------------------------------------------------------------------
 # Duration parsing
@@ -315,7 +322,11 @@ def init_exclude_ports():
 # Main loop
 # ---------------------------------------------------------------------------
 def run():
-    log("starting lemonade auto-unload watchdog")
+def log(msg):
+    print(f"[{ts()}] [auto-unload] {msg}", flush=True)
+
+
+    log(f"version: {script_hash()}")
     log(f"check interval: {CHECK_INTERVAL}s, pre-unload wait: {PRE_UNLOAD_WAIT}s")
     log(f"env fallback LEMONADE_KEEPALIVE: {format_duration(ENV_DEFAULT) if ENV_DEFAULT is not None else 'not set'}")
     log(f"config file search paths:")
