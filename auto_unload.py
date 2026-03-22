@@ -360,19 +360,38 @@ def run():
             # --- last_use changed => model was just used ---
             # last_use is a server uptime counter, NOT a unix timestamp.
             # We only care if the value changed since last check.
+            was_active = False
             if api_last_use != info["prev_last_use"]:
-                info["last_activity"] = now
                 info["prev_last_use"] = api_last_use
+                was_active = True
 
             # --- Stats changed => request just completed ---
             if sfp and info["last_stats"] and sfp != info["last_stats"]:
-                info["last_activity"] = now
+                was_active = True
 
             info["last_stats"] = sfp
+
+            if was_active:
+                was_idle = (now - info["last_activity"]) >= CHECK_INTERVAL * 2
+                info["last_activity"] = now
+                if was_idle:
+                    log(f"'{name}' idle timer reset (activity detected)")
 
             # --- Check idle time ---
             idle = now - info["last_activity"]
             if idle < idle_limit:
+                # Log progress at ~1/3 and ~2/3 of keepalive
+                report_interval = max(idle_limit // 3, 30)
+                prev_idle = idle - CHECK_INTERVAL
+                if prev_idle < 0:
+                    prev_idle = 0
+                # Log when we first become idle (crossed from 0 into idle)
+                if prev_idle < CHECK_INTERVAL and idle >= CHECK_INTERVAL:
+                    log(f"'{name}' idle timer started ({format_duration(idle_limit)})")
+                # Log at each report interval boundary
+                elif int(idle / report_interval) > int(prev_idle / report_interval):
+                    log(f"'{name}' idle {format_duration(int(idle))} / {format_duration(idle_limit)}")
+
                 continue
 
             # ==========================================================
