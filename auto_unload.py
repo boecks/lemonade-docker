@@ -316,9 +316,11 @@ def run():
     init_exclude_ports()
 
     tracked = {}
+    next_sleep = CHECK_INTERVAL
 
     while True:
-        time.sleep(CHECK_INTERVAL)
+        time.sleep(next_sleep)
+        next_sleep = CHECK_INTERVAL  # reset to default each cycle
 
         cfg_check = load_keepalive_config()
         if not cfg_check and ENV_DEFAULT is None:
@@ -373,7 +375,12 @@ def run():
                 }
                 if idle_limit == 0:
                     log(f"tracking '{name}' (keep_alive: immediate — will unload on next cycle)")
+                    next_sleep = PRE_UNLOAD_WAIT  # fast re-check for immediate unload
                 else:
+                    if 0 < idle_limit < CHECK_INTERVAL * 2:
+                        log(f"'{name}' keep_alive {format_duration(idle_limit)} is below minimum ({CHECK_INTERVAL * 2}s), clamping to {format_duration(CHECK_INTERVAL * 2)}")
+                        idle_limit = CHECK_INTERVAL * 2
+                        tracked[name]["idle_limit"] = idle_limit
                     log(f"tracking '{name}' (keep_alive: {format_duration(idle_limit)})")
                 continue
 
