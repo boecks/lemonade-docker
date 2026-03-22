@@ -28,7 +28,7 @@ OR directly inside recipe_options.json (if Lemonade ignores unknown keys):
   }
 
 The watchdog also checks $LEMONADE_KEEPALIVE env var as a final fallback
-for the default timeout. Set to 0 or omit to disable.
+for the default timeout.
 
 Durations: 10m, 600s, 1h, 600 (plain seconds).
 Special values:
@@ -36,7 +36,7 @@ Special values:
   -1  = never unload (model stays loaded indefinitely)
   omit / no config = watchdog ignores the model (not tracked)
 """
-import os, time, json, hashlib, urllib.request, urllib.error, re
+import os, time, json, hashlib, urllib.request, urllib.error
 from datetime import datetime
 from pathlib import Path
 
@@ -59,7 +59,8 @@ def script_hash():
 def ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-
+def log(msg):
+    print(f"[{ts()}] [auto-unload] {msg}", flush=True)
 
 # ---------------------------------------------------------------------------
 # Duration parsing
@@ -77,7 +78,6 @@ def parse_duration(s):
     s = str(s).strip()
     if s == "":
         return None
-    # Explicit never-unload
     if s == "-1":
         return NEVER
     try:
@@ -116,17 +116,12 @@ EXCLUDE_PORTS   = set()
 def find_config_paths():
     """Return list of config file paths to try, in priority order."""
     paths = []
-
-    # 1. Explicit env var
     explicit = os.environ.get("LEMONADE_KEEPALIVE_CONFIG")
     if explicit:
         paths.append(explicit)
-
-    # 2. recipe_options.json paths (read keep_alive from model entries)
     cache_dir = os.environ.get("LEMONADE_CACHE_DIR", os.path.expanduser("~/.cache/lemonade"))
     paths.append(os.path.join(cache_dir, "keepalive_options.json"))
     paths.append(os.path.join(cache_dir, "recipe_options.json"))
-
     return paths
 
 CONFIG_PATHS = find_config_paths()
@@ -138,22 +133,17 @@ def load_keepalive_config():
     Only includes keys where a valid keep_alive value was found.
     """
     result = {}
-
     for path in CONFIG_PATHS:
         try:
             with open(path, "r") as f:
                 data = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError, PermissionError):
             continue
-
         if not isinstance(data, dict):
             continue
-
         for key, val in data.items():
-            # Already have a value for this key from higher-priority file
             if key in result:
                 continue
-
             if isinstance(val, dict):
                 ka = val.get("keep_alive")
                 if ka is not None:
@@ -161,18 +151,15 @@ def load_keepalive_config():
                     if parsed is not None:
                         result[key] = parsed
             elif isinstance(val, str):
-                # Simple format: "model": "10m"
                 parsed = parse_duration(val)
                 if parsed is not None:
                     result[key] = parsed
-
     return result
 
-# Cache config with short TTL to avoid reading file on every model check
-# but still pick up changes quickly
+# Cache config with short TTL
 _config_cache = {}
 _config_cache_time = 0
-CONFIG_CACHE_TTL = 10  # re-read file every 10 seconds
+CONFIG_CACHE_TTL = 10
 
 def get_idle_seconds(model_name):
     """Get keepalive duration for a model. Re-reads config file periodically.
@@ -188,16 +175,10 @@ def get_idle_seconds(model_name):
     if (now - _config_cache_time) >= CONFIG_CACHE_TTL:
         _config_cache = load_keepalive_config()
         _config_cache_time = now
-
-    # Per-model from config file (explicit entry)
     if model_name in _config_cache:
         return _config_cache[model_name]
-
-    # _default from config file
     if "_default" in _config_cache:
         return _config_cache["_default"]
-
-    # Env var fallback (None if env var wasn't set)
     return ENV_DEFAULT
 
 # ---------------------------------------------------------------------------
@@ -233,7 +214,6 @@ def discover_llamaserver_port():
             lines = f.readlines()[1:]
     except Exception:
         return None
-
     localhost_listeners = []
     for line in lines:
         parts = line.split()
@@ -243,10 +223,8 @@ def discover_llamaserver_port():
         port = int(port_hex, 16)
         if addr_hex == "0100007F":
             localhost_listeners.append(port)
-
     exclude = EXCLUDE_PORTS | {LEMONADE_PORT}
     candidates = [p for p in localhost_listeners if p not in exclude]
-
     if len(candidates) == 1:
         return candidates[0]
     elif len(candidates) > 1:
@@ -278,18 +256,15 @@ def any_slot_processing():
     port = get_llamaserver_port()
     if not port:
         return None
-
     slots = http_get_json(f"http://127.0.0.1:{port}/slots")
     if slots and isinstance(slots, list):
         for slot in slots:
             if slot.get("is_processing", False):
                 return True
         return False
-
     health = http_get_json(f"http://127.0.0.1:{port}/health")
     if health:
         return health.get("status") != "ok"
-
     return None
 
 # ---------------------------------------------------------------------------
@@ -322,11 +297,7 @@ def init_exclude_ports():
 # Main loop
 # ---------------------------------------------------------------------------
 def run():
-def log(msg):
-    print(f"[{ts()}] [auto-unload] {msg}", flush=True)
-
-
-    log(f"version: {script_hash()}")
+    log(f"starting (version: {script_hash()})")
     log(f"check interval: {CHECK_INTERVAL}s, pre-unload wait: {PRE_UNLOAD_WAIT}s")
     log(f"env fallback LEMONADE_KEEPALIVE: {format_duration(ENV_DEFAULT) if ENV_DEFAULT is not None else 'not set'}")
     log(f"config file search paths:")
@@ -334,7 +305,6 @@ def log(msg):
         exists = os.path.isfile(p)
         log(f"  {p} ({'found' if exists else 'not found'})")
 
-    # Show initial config
     cfg = load_keepalive_config()
     if cfg:
         log("loaded keepalive config:")
@@ -345,13 +315,11 @@ def log(msg):
 
     init_exclude_ports()
 
-    # model_name -> {"last_activity": float, "last_stats": tuple|None, "idle_limit": int, "logged_idle_start": bool}
     tracked = {}
 
     while True:
         time.sleep(CHECK_INTERVAL)
 
-        # If no config exists yet, wait quietly until one appears
         cfg_check = load_keepalive_config()
         if not cfg_check and ENV_DEFAULT is None:
             continue
@@ -373,7 +341,7 @@ def log(msg):
                 del tracked[name]
 
         for name, model in loaded.items():
-            idle_limit = get_idle_seconds(name)  # re-reads config if stale
+            idle_limit = get_idle_seconds(name)
 
             # None = not configured, don't track
             if idle_limit is None:
@@ -419,7 +387,6 @@ def log(msg):
             # --- Immediate unload: skip activity tracking, go straight to unload ---
             if idle_limit == 0:
                 log(f"'{name}' keep_alive is immediate, verifying before unload...")
-                # Still do safety checks — don't yank a model mid-inference
                 busy = any_slot_processing()
                 if busy is True:
                     log(f"  '{name}' slot is_processing=true, deferring immediate unload")
@@ -434,7 +401,6 @@ def log(msg):
                     log(f"  '{name}' slot became busy during wait, deferring immediate unload")
                     continue
 
-                # Re-check config — maybe user just changed it
                 final_limit = get_idle_seconds(name)
                 if final_limit is None:
                     log(f"  '{name}' keepalive was just removed from config, aborting unload")
@@ -485,7 +451,7 @@ def log(msg):
             # --- Check idle time ---
             idle = now - info["last_activity"]
             if idle < idle_limit:
-                # Log once when idle period starts (first check where we're idle)
+                # Log once when idle period starts
                 if not info.get("logged_idle_start") and idle >= CHECK_INTERVAL:
                     info["logged_idle_start"] = True
                     log(f"'{name}' idle, unload in {format_duration(max(0, int(idle_limit - idle)))}")
@@ -548,7 +514,7 @@ def log(msg):
                 log(f"  '{name}' stats changed during wait, aborting unload")
                 continue
 
-            # Re-read config one final time (maybe user just changed it)
+            # Re-read config one final time
             final_limit = get_idle_seconds(name)
             if final_limit is None:
                 log(f"  '{name}' keepalive was just removed from config, aborting unload")
