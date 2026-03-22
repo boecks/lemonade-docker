@@ -30,11 +30,20 @@ OR directly inside recipe_options.json (if Lemonade ignores unknown keys):
 The watchdog also checks $LEMONADE_KEEPALIVE env var as a final fallback
 for the default timeout. Set to 0 or omit to disable.
 
-Durations: 10m, 600s, 1h, 600 (plain seconds). 0 = disabled for that model.
+Durations: 10m, 600s, 1h, 600 (plain seconds).
+Special values:
+  0   = immediate unload (unload on next check cycle after model loads)
+  -1  = never unload (model stays loaded indefinitely)
+  omit / no config = watchdog ignores the model (not tracked)
 """
 import os, time, json, urllib.request, urllib.error, re
 from datetime import datetime
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Sentinel for "never unload"
+# ---------------------------------------------------------------------------
+NEVER = -1
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -49,21 +58,35 @@ def log(msg):
 # Duration parsing
 # ---------------------------------------------------------------------------
 def parse_duration(s):
-    if not s or str(s).strip() in ("0", ""):
-        return 0
+    """Parse a duration string into seconds.
+
+    Returns:
+        int: seconds (>0), 0 for immediate unload, or NEVER (-1) for never unload.
+        None: if the value is empty/missing/unparseable — means "no opinion",
+              so the fallback chain continues (_default -> env var).
+    """
+    if s is None:
+        return None
     s = str(s).strip()
+    if s == "":
+        return None
+    # Explicit never-unload
+    if s == "-1":
+        return NEVER
     try:
         if s.endswith("h"):  return int(s[:-1]) * 3600
         if s.endswith("m"):  return int(s[:-1]) * 60
         if s.endswith("s"):  return int(s[:-1])
         return int(s)
     except ValueError:
-        log(f"invalid duration value: {s!r}, returning 0")
-        return 0
+        log(f"invalid duration value: {s!r}, ignoring")
+        return None
 
 def format_duration(secs):
+    if secs == NEVER:
+        return "never"
     if secs <= 0:
-        return "disabled"
+        return "immediate"
     if secs >= 3600 and secs % 3600 == 0:
         return f"{secs // 3600}h"
     if secs >= 60 and secs % 60 == 0:
@@ -77,7 +100,7 @@ LEMONADE_PORT   = int(os.environ.get("LEMONADE_PORT", "8000"))
 URL             = f"http://127.0.0.1:{LEMONADE_PORT}"
 CHECK_INTERVAL  = int(os.environ.get("LEMONADE_CHECK_INTERVAL", "30"))
 PRE_UNLOAD_WAIT = 3
-ENV_DEFAULT     = parse_duration(os.environ.get("LEMONADE_KEEPALIVE", "0"))
+ENV_DEFAULT     = parse_duration(os.environ.get("LEMONADE_KEEPALIVE"))
 EXCLUDE_PORTS   = set()
 
 # ---------------------------------------------------------------------------
@@ -104,7 +127,8 @@ CONFIG_PATHS = find_config_paths()
 def load_keepalive_config():
     """
     Read keepalive config from JSON file. Re-reads on every call (hot-reload).
-    Returns dict: { model_name: seconds, "_default": seconds }
+    Returns dict: { model_name: seconds_or_NEVER, "_default": seconds_or_NEVER }
+    Only includes keys where a valid keep_alive value was found.
     """
     result = {}
 
@@ -126,10 +150,14 @@ def load_keepalive_config():
             if isinstance(val, dict):
                 ka = val.get("keep_alive")
                 if ka is not None:
-                    result[key] = parse_duration(ka)
+                    parsed = parse_duration(ka)
+                    if parsed is not None:
+                        result[key] = parsed
             elif isinstance(val, str):
                 # Simple format: "model": "10m"
-                result[key] = parse_duration(val)
+                parsed = parse_duration(val)
+                if parsed is not None:
+                    result[key] = parsed
 
     return result
 
@@ -140,14 +168,21 @@ _config_cache_time = 0
 CONFIG_CACHE_TTL = 10  # re-read file every 10 seconds
 
 def get_idle_seconds(model_name):
-    """Get keepalive duration for a model. Re-reads config file periodically."""
+    """Get keepalive duration for a model. Re-reads config file periodically.
+
+    Fallback chain: per-model config -> _default config -> env var -> None.
+
+    Returns:
+        int: seconds (>0), 0 for immediate, NEVER (-1) for never unload.
+        None: no config covers this model — don't track it.
+    """
     global _config_cache, _config_cache_time
     now = time.time()
     if (now - _config_cache_time) >= CONFIG_CACHE_TTL:
         _config_cache = load_keepalive_config()
         _config_cache_time = now
 
-    # Per-model from config file
+    # Per-model from config file (explicit entry)
     if model_name in _config_cache:
         return _config_cache[model_name]
 
@@ -155,7 +190,7 @@ def get_idle_seconds(model_name):
     if "_default" in _config_cache:
         return _config_cache["_default"]
 
-    # Env var fallback
+    # Env var fallback (None if env var wasn't set)
     return ENV_DEFAULT
 
 # ---------------------------------------------------------------------------
@@ -282,7 +317,7 @@ def init_exclude_ports():
 def run():
     log("starting lemonade auto-unload watchdog")
     log(f"check interval: {CHECK_INTERVAL}s, pre-unload wait: {PRE_UNLOAD_WAIT}s")
-    log(f"env fallback LEMONADE_KEEPALIVE: {format_duration(ENV_DEFAULT)}")
+    log(f"env fallback LEMONADE_KEEPALIVE: {format_duration(ENV_DEFAULT) if ENV_DEFAULT is not None else 'not set'}")
     log(f"config file search paths:")
     for p in CONFIG_PATHS:
         exists = os.path.isfile(p)
@@ -294,12 +329,12 @@ def run():
         log("loaded keepalive config:")
         for k, v in cfg.items():
             log(f"  {k}: {format_duration(v)}")
-    elif ENV_DEFAULT <= 0:
+    elif ENV_DEFAULT is None:
         log("no config found yet, will poll until config file appears...")
 
     init_exclude_ports()
 
-    # model_name -> {"last_activity": float, "last_stats": tuple|None, "idle_limit": int}
+    # model_name -> {"last_activity": float, "last_stats": tuple|None, "idle_limit": int, "logged_idle_start": bool}
     tracked = {}
 
     while True:
@@ -307,7 +342,7 @@ def run():
 
         # If no config exists yet, wait quietly until one appears
         cfg_check = load_keepalive_config()
-        if not cfg_check and ENV_DEFAULT <= 0:
+        if not cfg_check and ENV_DEFAULT is None:
             continue
 
         health = api("/api/v1/health")
@@ -329,12 +364,21 @@ def run():
         for name, model in loaded.items():
             idle_limit = get_idle_seconds(name)  # re-reads config if stale
 
-            # Skip models with keepalive disabled
-            if idle_limit <= 0:
+            # None = not configured, don't track
+            if idle_limit is None:
                 if name in tracked:
-                    # Was tracked before, config changed to disable
-                    log(f"'{name}' keepalive disabled, stopping tracking")
+                    log(f"'{name}' keepalive removed from config, stopping tracking")
                     del tracked[name]
+                continue
+
+            # NEVER = keep loaded indefinitely
+            if idle_limit == NEVER:
+                if name not in tracked:
+                    log(f"tracking '{name}' (keep_alive: never)")
+                    tracked[name] = {"idle_limit": NEVER}
+                elif tracked[name].get("idle_limit") != NEVER:
+                    log(f"'{name}' keep_alive changed: {format_duration(tracked[name]['idle_limit'])} -> never")
+                    tracked[name] = {"idle_limit": NEVER}
                 continue
 
             api_last_use = model.get("last_use", 0)
@@ -346,8 +390,12 @@ def run():
                     "prev_last_use": api_last_use,
                     "last_stats": sfp,
                     "idle_limit": idle_limit,
+                    "logged_idle_start": False,
                 }
-                log(f"tracking '{name}' (keep_alive: {format_duration(idle_limit)})")
+                if idle_limit == 0:
+                    log(f"tracking '{name}' (keep_alive: immediate — will unload on next cycle)")
+                else:
+                    log(f"tracking '{name}' (keep_alive: {format_duration(idle_limit)})")
                 continue
 
             info = tracked[name]
@@ -357,15 +405,60 @@ def run():
                 log(f"'{name}' keep_alive changed: {format_duration(info['idle_limit'])} -> {format_duration(idle_limit)}")
                 info["idle_limit"] = idle_limit
 
-            # --- last_use changed => model was just used ---
-            # last_use is a server uptime counter, NOT a unix timestamp.
-            # We only care if the value changed since last check.
+            # --- Immediate unload: skip activity tracking, go straight to unload ---
+            if idle_limit == 0:
+                log(f"'{name}' keep_alive is immediate, verifying before unload...")
+                # Still do safety checks — don't yank a model mid-inference
+                busy = any_slot_processing()
+                if busy is True:
+                    log(f"  '{name}' slot is_processing=true, deferring immediate unload")
+                    continue
+                elif busy is None:
+                    log(f"  '{name}' WARNING: could not query llama-server slots")
+
+                time.sleep(PRE_UNLOAD_WAIT)
+
+                busy2 = any_slot_processing()
+                if busy2 is True:
+                    log(f"  '{name}' slot became busy during wait, deferring immediate unload")
+                    continue
+
+                # Re-check config — maybe user just changed it
+                final_limit = get_idle_seconds(name)
+                if final_limit is None:
+                    log(f"  '{name}' keepalive was just removed from config, aborting unload")
+                    del tracked[name]
+                    continue
+                if final_limit == NEVER:
+                    log(f"  '{name}' keepalive was just set to never, aborting unload")
+                    info["idle_limit"] = NEVER
+                    continue
+                if final_limit > 0:
+                    log(f"  '{name}' keepalive was just changed to {format_duration(final_limit)}, aborting immediate unload")
+                    info["idle_limit"] = final_limit
+                    info["last_activity"] = now
+                    info["logged_idle_start"] = False
+                    continue
+
+                log(f"unloading '{name}' (immediate)")
+                result = api("/api/v1/unload", {"model_name": name})
+                if result is not None:
+                    log(f"  '{name}' unloaded successfully")
+                else:
+                    log(f"  '{name}' unload request failed")
+                tracked.pop(name, None)
+
+                global _cached_llama_port, _cached_llama_port_time
+                _cached_llama_port = None
+                _cached_llama_port_time = 0
+                continue
+
+            # --- Normal timed keepalive ---
             was_active = False
             if api_last_use != info["prev_last_use"]:
                 info["prev_last_use"] = api_last_use
                 was_active = True
 
-            # --- Stats changed => request just completed ---
             if sfp and info["last_stats"] and sfp != info["last_stats"]:
                 was_active = True
 
@@ -374,35 +467,39 @@ def run():
             if was_active:
                 was_idle = (now - info["last_activity"]) >= CHECK_INTERVAL * 2
                 info["last_activity"] = now
+                info["logged_idle_start"] = False
                 if was_idle:
-                    log(f"'{name}' idle timer reset (activity detected)")
+                    log(f"'{name}' activity detected, idle timer reset")
 
             # --- Check idle time ---
             idle = now - info["last_activity"]
             if idle < idle_limit:
-                # Log progress at ~1/3 and ~2/3 of keepalive
-                report_interval = max(idle_limit // 3, 30)
-                prev_idle = idle - CHECK_INTERVAL
-                if prev_idle < 0:
-                    prev_idle = 0
-                # Log when we first become idle (crossed from 0 into idle)
-                if prev_idle < CHECK_INTERVAL and idle >= CHECK_INTERVAL:
-                    log(f"'{name}' idle timer started ({format_duration(idle_limit)})")
-                # Log at each report interval boundary
-                elif int(idle / report_interval) > int(prev_idle / report_interval):
-                    log(f"'{name}' idle {format_duration(int(idle))} / {format_duration(idle_limit)}")
+                # Log once when idle period starts (first check where we're idle)
+                if not info.get("logged_idle_start") and idle >= CHECK_INTERVAL:
+                    info["logged_idle_start"] = True
+                    log(f"'{name}' idle, unload in {format_duration(max(0, int(idle_limit - idle)))}")
+
+                # Progress logging for longer keepalives
+                if idle_limit > CHECK_INTERVAL * 3:
+                    report_interval = max(idle_limit // 3, 30)
+                    prev_idle = idle - CHECK_INTERVAL
+                    if prev_idle < 0:
+                        prev_idle = 0
+                    if int(idle / report_interval) > int(prev_idle / report_interval):
+                        log(f"'{name}' idle {format_duration(int(idle))} / {format_duration(idle_limit)}")
 
                 continue
 
             # ==========================================================
             # PRE-UNLOAD SAFETY CHECKS
             # ==========================================================
-            log(f"'{name}' idle {idle:.0f}s >= {format_duration(idle_limit)}, verifying...")
+            log(f"'{name}' idle {format_duration(int(idle))}, unloading... (keep_alive: {format_duration(idle_limit)})")
 
             # Check 1: Any llama-server slot actively processing?
             busy = any_slot_processing()
             if busy is True:
                 info["last_activity"] = now
+                info["logged_idle_start"] = False
                 log(f"  '{name}' slot is_processing=true, aborting unload")
                 continue
             elif busy is None:
@@ -417,6 +514,7 @@ def run():
                     if fresh_lu != info["prev_last_use"]:
                         info["last_activity"] = time.time()
                         info["prev_last_use"] = fresh_lu
+                        info["logged_idle_start"] = False
                         log(f"  '{name}' last_use changed, aborting unload")
                         continue
 
@@ -426,6 +524,7 @@ def run():
             busy2 = any_slot_processing()
             if busy2 is True:
                 info["last_activity"] = time.time()
+                info["logged_idle_start"] = False
                 log(f"  '{name}' slot became busy during wait, aborting unload")
                 continue
 
@@ -434,13 +533,17 @@ def run():
             if sfp2 and sfp and sfp2 != sfp:
                 info["last_activity"] = time.time()
                 info["last_stats"]    = sfp2
+                info["logged_idle_start"] = False
                 log(f"  '{name}' stats changed during wait, aborting unload")
                 continue
 
             # Re-read config one final time (maybe user just changed it)
             final_limit = get_idle_seconds(name)
-            if final_limit <= 0:
-                log(f"  '{name}' keepalive was just disabled in config, aborting unload")
+            if final_limit is None:
+                log(f"  '{name}' keepalive was just removed from config, aborting unload")
+                continue
+            if final_limit == NEVER:
+                log(f"  '{name}' keepalive was just set to never, aborting unload")
                 continue
             if final_limit > idle_limit:
                 info["idle_limit"] = final_limit
@@ -448,7 +551,7 @@ def run():
                 continue
 
             # All clear — unload
-            log(f"unloading '{name}' (idle {idle:.0f}s >= {format_duration(idle_limit)})")
+            log(f"  '{name}' all clear, sending unload request")
             result = api("/api/v1/unload", {"model_name": name})
             if result is not None:
                 log(f"  '{name}' unloaded successfully")
@@ -456,8 +559,6 @@ def run():
                 log(f"  '{name}' unload request failed")
             tracked.pop(name, None)
 
-            # Invalidate port cache since llama-server will shut down
-            global _cached_llama_port, _cached_llama_port_time
             _cached_llama_port = None
             _cached_llama_port_time = 0
 
