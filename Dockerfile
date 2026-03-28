@@ -1,11 +1,8 @@
 FROM ubuntu:24.04
-
 ARG LEMONADE_VERSION=10.0.1
-
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Runtime dependencies only — ROCm comes from the host via /dev/kfd + /dev/dri,
-# the .deb bundles its own ROCm libs
+# Runtime dependencies + software-properties-common for add-apt-repository
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
@@ -13,16 +10,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libatomic1 \
         moreutils \
         python3 \
+        software-properties-common \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Lemonade Server (includes web app + binary)
-RUN curl -L -o /tmp/lemonade.deb \
-        "https://github.com/lemonade-sdk/lemonade/releases/download/v${LEMONADE_VERSION}/lemonade-server_${LEMONADE_VERSION}_amd64.deb" \
+# Install Lemonade Server from PPA (v10.0.1+ moved from .deb to PPA)
+RUN add-apt-repository -y ppa:lemonade-team/stable \
     && apt-get update \
-    && apt-get install -y /tmp/lemonade.deb \
+    && apt-get install -y lemonade-server=${LEMONADE_VERSION}* \
     && apt-get autoremove -y \
     && apt-get clean -y \
-    && rm -rf /tmp/* /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
 # Model storage and llama backend (mount from host)
 VOLUME ["/models", "/usr/local/share/lemonade-server/llama"]
@@ -37,7 +34,6 @@ ENV LEMONADE_LLAMACPP=rocm
 
 # Idle model watchdog — reads config from /root/.cache/lemonade/keepalive_options.json
 COPY auto_unload.py /opt/auto_unload.py
-
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
