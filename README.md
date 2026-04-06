@@ -48,22 +48,28 @@ Mount this file to `/root/.cache/lemonade` inside the container. The watchdog re
 
 - `_default` applies to any model without a specific entry
 - Duration formats: `30m`, `1h`, `600s`, or `600` (plain seconds)
-- Set to `"0"` to disable keepalive for a specific model
+- Special values:
+  - `"0"` → immediate unload (unload on next check cycle)
+  - `"-1"` → never unload (model stays loaded indefinitely)
+  - omit or empty → watchdog ignores the model (not tracked)
 - Changes are picked up within one check cycle (~30 seconds)
 
 ### Model Config (`recipe_options.json`)
 
-Lemonade's own per-model configuration. Place it alongside `keepalive_options.json`:
+Lemonade's own per-model configuration. You can also place keepalive settings directly here:
 
 ```json
 {
   "Qwen3.5-35B-A3B-GGUF": {
     "ctx_size": 147456,
     "llamacpp_args": "--reasoning off",
-    "llamacpp_backend": "rocm"
+    "llamacpp_backend": "rocm",
+    "keep_alive": "30m"
   }
 }
 ```
+
+Keepalive settings in `recipe_options.json` take precedence over `keepalive_options.json` when both files exist.
 
 ### Environment Variables
 
@@ -71,9 +77,11 @@ The watchdog supports these optional env vars as fallbacks:
 
 | Variable | Default | Description |
 |---|---|---|
-| `LEMONADE_KEEPALIVE` | `0` (disabled) | Fallback default keepalive if no config file exists |
+| `LEMONADE_KEEPALIVE` | *(not set)* | Fallback default keepalive if no config file exists |
 | `LEMONADE_CHECK_INTERVAL` | `30` | Seconds between watchdog checks |
 | `LEMONADE_KEEPALIVE_CONFIG` | *(auto-discovered)* | Explicit path to keepalive config file |
+| `LEMONADE_CACHE_DIR` | `~/.cache/lemonade` | Default directory for config files |
+| `LEMONADE_PORT` | `8000` | Port of the Lemonade server |
 
 The config file always takes priority over environment variables.
 
@@ -99,14 +107,14 @@ If any check detects activity, the unload is aborted and the idle timer resets.
 
 ### Hot-Reload
 
-The config file is re-read every 10 seconds. When a change is detected:
+The config file is re-read every 10 seconds (cached between checks). When a change is detected:
 
 - New keepalive durations take effect immediately
 - If the timeout was increased, a pending unload is aborted
-- If a model's keepalive was set to `0`, tracking stops
-- Changes are logged:
+- If a model's keepalive was set to `0` or removed, tracking stops
+- Changes are logged with timestamps:
   ```
-  [auto-unload] 'Qwen3.5-4B-GGUF' keep_alive changed: 2m -> 5m
+  2026-04-06 12:34:56.123 [Info] (IdleWatchdog) 'Qwen3.5-4B-GGUF' keep_alive changed: 2m -> 5m
   ```
 
 ### Port Discovery
@@ -137,16 +145,28 @@ environment:
 The watchdog logs meaningful events only — it's silent during normal polling:
 
 ```
-[auto-unload] starting lemonade auto-unload watchdog
-[auto-unload] loaded keepalive config:
-[auto-unload]   _default: 10m
-[auto-unload]   Qwen3.5-35B-A3B-GGUF: 30m
-[auto-unload] tracking 'Qwen3.5-4B-GGUF' (keep_alive: 10m)
-[auto-unload] 'Qwen3.5-4B-GGUF' idle 600s >= 10m, verifying...
-[auto-unload] llama-server discovered on port 8001
-[auto-unload] unloading 'Qwen3.5-4B-GGUF' (idle 600s >= 10m)
-[auto-unload]   'Qwen3.5-4B-GGUF' unloaded successfully
+2026-04-06 12:34:56.123 [Info] (IdleWatchdog) starting (version: a1b2c3d4)
+2026-04-06 12:34:56.124 [Info] (IdleWatchdog) check interval: 30s, pre-unload wait: 3s
+2026-04-06 12:34:56.125 [Info] (IdleWatchdog) config file search paths:
+2026-04-06 12:34:56.125 [Info] (IdleWatchdog)   /root/.cache/lemonade/keepalive_options.json (found)
+2026-04-06 12:34:56.126 [Info] (IdleWatchdog) loaded keepalive config:
+2026-04-06 12:34:56.126 [Info] (IdleWatchdog)   _default: 10m
+2026-04-06 12:34:56.126 [Info] (IdleWatchdog)   Qwen3.5-35B-A3B-GGUF: 30m
+2026-04-06 12:34:56.127 [Info] (IdleWatchdog) tracking 'Qwen3.5-4B-GGUF' (keep_alive: 10m)
+2026-04-06 12:35:26.128 [Info] (IdleWatchdog) 'Qwen3.5-4B-GGUF' idle 30s, unload in 2m
+2026-04-06 12:36:00.129 [Info] (IdleWatchdog) 'Qwen3.5-4B-GGUF' idle 60s, unload in 1m
+2026-04-06 12:37:00.130 [Info] (IdleWatchdog) 'Qwen3.5-4B-GGUF' idle 120s, unloading... (keep_alive: 10m)
+2026-04-06 12:37:00.131 [Info] (IdleWatchdog)   'Qwen3.5-4B-GGUF' all clear, sending unload request
+2026-04-06 12:37:00.132 [Info] (IdleWatchdog)   'Qwen3.5-4B-GGUF' unloaded successfully
 ```
+
+### Log Levels
+
+- **Startup**: Shows version hash, check interval, config paths, and loaded configuration
+- **Idle tracking**: Logs when a model starts idling and periodic progress updates
+- **Activity detection**: Resets idle timer when new requests arrive
+- **Unload events**: Pre-unload verification, aborts if activity detected, or success message
+- **Warnings**: Shows when llama-server port discovery or slot queries fail
 
 ## Upstream
 
