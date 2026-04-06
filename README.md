@@ -175,3 +175,7 @@ This project adds keepalive functionality that Lemonade Server doesn't have nati
 ## License
 
 Apache 2.0 — same as Lemonade Server.
+
+## Acknowledgments
+
+Huge thanks to the [Lemonade Team](https://github.com/lemonade-sdk/lemonade) for building what the AMD local AI community desperately needed.
