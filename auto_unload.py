@@ -61,7 +61,7 @@ def ts():
   return now.strftime("%Y-%m-%d %H:%M:%S.") + f"{now.microsecond // 1000:03d}"
 
 def log(msg):
-    print(f"{ts()} [info] (IdleWatchdog) {msg}", flush=True)
+    print(f"{ts()} [Info] (IdleWatchdog) {msg}", flush=True)
 
 # ---------------------------------------------------------------------------
 # Duration parsing
