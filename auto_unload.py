@@ -57,10 +57,11 @@ def script_hash():
         return "unknown"
 
 def ts():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+  now = datetime.now()
+  return now.strftime("%Y-%m-%d %H:%M:%S.") + f"{now.microsecond // 1000:03d}"
 
 def log(msg):
-    print(f"[{ts()}] [auto-unload] {msg}", flush=True)
+    print(f"{ts()} [auto-unload] {msg}", flush=True)
 
 # ---------------------------------------------------------------------------
 # Duration parsing
