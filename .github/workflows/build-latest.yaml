@@ -1,0 +1,48 @@
+name: Build and Push (release)
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare image variables
+        run: |
+          set -euo pipefail
+          IMAGE_NAME="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          echo "IMAGE_NAME=${IMAGE_NAME}" >> "$GITHUB_ENV"
+          echo "TAG_NAME=${TAG_NAME}" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login "${REGISTRY}" \
+            -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push release images
+        run: |
+          set -euo pipefail
+          docker build \
+            -t "${REGISTRY}/${IMAGE_NAME}:${TAG_NAME}" \
+            -t "${REGISTRY}/${IMAGE_NAME}:latest" \
+            --label org.opencontainers.image.source="https://github.com/${GITHUB_REPOSITORY}" \
+            --label org.opencontainers.image.revision="${GITHUB_SHA}" \
+            --label org.opencontainers.image.created="$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            --label org.opencontainers.image.authors="${{ github.actor }}" \
+            --label org.opencontainers.image.title="$(basename "${GITHUB_REPOSITORY}")" \
+            --label org.opencontainers.image.description="Release build" \
+            --label org.opencontainers.image.version="${TAG_NAME}" \
+            .
+
+          docker push "${REGISTRY}/${IMAGE_NAME}:${TAG_NAME}"
+          docker push "${REGISTRY}/${IMAGE_NAME}:latest"
