@@ -1,62 +1,121 @@
 # lemonade-docker
 
-Dockerized [Lemonade Server](https://github.com/lemonade-sdk/lemonade) with an idle model watchdog that adds **per-model keepalive** — a feature Lemonade doesn't have natively yet.
+An unofficial container image for [Lemonade Server](https://github.com/lemonade-sdk/lemonade) with a side-car watchdog that unloads idle models on a configurable per-model schedule.
 
-## The Problem
+Lemonade keeps loaded models resident until you explicitly unload them. That's the right default for a desktop install, but if you serve models from a workstation or a small GPU box, you usually want a few of them to drop themselves after a quiet period so VRAM stays available for whichever one you actually need next. This image bundles a small Python watchdog that does exactly that, leaving everything else about Lemonade untouched.
 
-Lemonade Server has no built-in way to automatically unload idle models from GPU memory. If you're running coding agents like OpenCode or Claude Code that have long inference times (minutes of token generation), a naive timeout-based approach will kill models mid-inference. Ollama solves this with a per-request `keep_alive` parameter — Lemonade has nothing equivalent.
+> [!NOTE]
+> This is a community project. It is not affiliated with or endorsed by AMD or the Lemonade SDK team.
 
-## The Solution
+## What's in the image
 
-A lightweight Python watchdog (`auto_unload.py`) that runs alongside Lemonade Server inside the container. It:
+- **Lemonade Server** installed from the official [`ppa:lemonade-team/stable`](https://launchpad.net/~lemonade-team/+archive/ubuntu/stable) PPA, pinned at build time via the `LEMONADE_VERSION` build arg.
+- **`auto_unload.py`** — a standalone Python script with no dependencies outside the standard library. It polls Lemonade's HTTP API for loaded models and llama-server's `/slots` endpoint for actual inference activity, then issues unload requests when a model has been idle long enough. Activity detection is conservative: a model is only unloaded after multiple checks confirm no slot is processing and the configured timeout has elapsed.
 
-- **Detects active inference** by querying the underlying llama-server's `/slots` endpoint (`is_processing` flag) — will never unload a model mid-generation
-- **Supports per-model keepalive durations** via a hot-reloadable JSON config file — no container restart needed
-- **Auto-discovers the llama-server port** via `/proc/net/tcp` — no hardcoded ports
-- **Triple safety check** before every unload: slot status, fresh health check, and a brief wait with recheck
+The watchdog is opt-in per model. Without configuration it does nothing, exactly matching upstream Lemonade behavior.
 
-## Quick Start
+## Quick start
 
 ```bash
-git clone https://github.com/YOUR_USER/lemonade-docker.git
+git clone https://github.com/<you>/lemonade-docker
 cd lemonade-docker
-
-# Copy and edit the example files
-cp keepalive_options.json.example lemonade-data/keepalive_options.json
-cp docker-compose.yml.example docker-compose.yml
-
-# Edit docker-compose.yml to match your paths and GPU setup
-# Edit lemonade-data/keepalive_options.json for your models
-
-# Build and run
 docker compose up -d
 ```
 
+Lemonade is then reachable at `http://localhost:13305` (the v10+ default port). Logs stream to `docker logs -f lemonade-server`.
+
+To enable idle unloading for a model, drop a `keepalive_options.json` file into the cache volume — see [Configuration](#configuration) below.
+
+## docker-compose.yml
+
+```yaml
+services:
+  lemonade:
+    build:
+      context: .
+      args:
+        LEMONADE_VERSION: 10.1.0
+    container_name: lemonade-server
+    ports:
+      - "13305:13305"  # HTTP API
+      - "9000:9000"    # WebSocket logs
+    volumes:
+      - ./models:/models
+      - ./llama:/usr/local/share/lemonade-server/llama
+      - ./lemonade-cache:/var/lib/lemonade/.cache/lemonade
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+      - render
+    restart: unless-stopped
+```
+
+The bind mount on `./lemonade-cache` is what makes `keepalive_options.json` editable from the host. It also persists Lemonade's own `config.json` across container rebuilds, so anything you change with `lemonade config set ...` survives.
+
+If you don't need ROCm, drop the `devices` and `group_add` blocks and let the `llamacpp` backend default to `auto`.
+
 ## Configuration
 
-### Keepalive Config (`keepalive_options.json`)
+### Lemonade itself
 
-Mount this file to `/root/.cache/lemonade` inside the container. The watchdog re-reads it every 10 seconds, so changes take effect at runtime without restarting anything.
+In v10+, all of Lemonade's configuration lives in a single `config.json` file inside the cache directory. With the bind mount above, that file is at `./lemonade-cache/config.json` on the host. You can either edit it directly (and restart the container) or use the official CLI without restarting:
+
+```bash
+docker exec lemonade-server lemonade config            # show current config
+docker exec lemonade-server lemonade config set llamacpp.backend=rocm
+docker exec lemonade-server lemonade config set port=8000
+```
+
+See the [upstream configuration guide](https://github.com/lemonade-sdk/lemonade/blob/main/docs/server/configuration.md) for the full set of keys.
+
+### Idle unload watchdog
+
+The watchdog reads `keepalive_options.json` from the same cache directory. The file is **completely optional** — without it, the watchdog runs but unloads nothing, matching upstream's "loaded means loaded" behavior.
+
+#### Minimal example
 
 ```json
 {
-  "_default": { "keep_alive": "10m" },
-  "Qwen3.5-35B-A3B-GGUF": { "keep_alive": "30m" },
-  "Qwen3.5-4B-GGUF": { "keep_alive": "5m" }
+  "Qwen3.5-4B-GGUF": { "keep_alive": "5m" },
+  "Qwen3.5-35B-A3B-GGUF": { "keep_alive": "30m" }
 }
 ```
 
-- `_default` applies to any model without a specific entry
-- Duration formats: `30m`, `1h`, `600s`, or `600` (plain seconds)
-- Special values:
-  - `"0"` → immediate unload (unload on next check cycle)
-  - `"-1"` → never unload (model stays loaded indefinitely)
-  - omit or empty → watchdog ignores the model (not tracked)
-- Changes are picked up within one check cycle (~30 seconds)
+Only the two models listed are tracked. Any other model that gets loaded is left alone forever, just like upstream.
 
-### Model Config (`recipe_options.json`)
+#### With a global default
 
-Lemonade's own per-model configuration. You can also place keepalive settings directly here:
+If you want most models to share the same timeout and only override a few, use the special `_global` key:
+
+```json
+{
+  "_global": { "keep_alive": "10m" },
+  "Qwen3.5-35B-A3B-GGUF": { "keep_alive": "1h" },
+  "Llama-3.2-1B-Instruct-Hybrid": { "keep_alive": "-1" }
+}
+```
+
+With `_global` set, **every** loaded model gets a 10-minute idle timeout unless it has its own entry. The big Qwen overrides to 1h; the small Llama overrides to never unload.
+
+`_global` is opt-in. If you don't want a global default, leave it out and only the models you list will be tracked.
+
+#### Duration syntax
+
+| Value | Meaning |
+|-------|---------|
+| `"30s"` / `"30"` | 30 seconds |
+| `"5m"` | 5 minutes |
+| `"1h"` | 1 hour |
+| `"0"` | unload on next check cycle (immediate) |
+| `"-1"` | never unload (keep loaded indefinitely) |
+
+The minimum effective timeout is `2 * LEMONADE_CHECK_INTERVAL` (60 seconds by default). Smaller values are clamped and a warning is logged.
+
+#### Sharing the file with Lemonade's recipe options
+
+If Lemonade tolerates unknown keys in `recipe_options.json`, you can put `keep_alive` directly inside your existing recipe entries instead of maintaining a separate file:
 
 ```json
 {
@@ -69,113 +128,62 @@ Lemonade's own per-model configuration. You can also place keepalive settings di
 }
 ```
 
-Keepalive settings in `recipe_options.json` take precedence over `keepalive_options.json` when both files exist.
+The watchdog reads `recipe_options.json` as a fallback when `keepalive_options.json` is absent. Use whichever layout you prefer.
 
-### Environment Variables
+### Hot reload
 
-The watchdog supports these optional env vars as fallbacks:
+The watchdog re-reads its config file every 10 seconds, so you can change timeouts without restarting anything. Edit `./lemonade-cache/keepalive_options.json` on the host and the next idle check picks up the change. Adding, removing, and modifying entries are all hot-reloadable.
 
-| Variable | Default | Description |
-|---|---|---|
-| `LEMONADE_KEEPALIVE` | *(not set)* | Fallback default keepalive if no config file exists |
-| `LEMONADE_CHECK_INTERVAL` | `30` | Seconds between watchdog checks |
-| `LEMONADE_KEEPALIVE_CONFIG` | *(auto-discovered)* | Explicit path to keepalive config file |
-| `LEMONADE_CACHE_DIR` | `~/.cache/lemonade` | Default directory for config files |
-| `LEMONADE_PORT` | `8000` | Port of the Lemonade server |
+## Environment variables
 
-The config file always takes priority over environment variables.
+The watchdog respects a small set of optional variables. Lemonade itself migrated almost all of its env vars into `config.json` in v10.1; only `LEMONADE_API_KEY` and `HF_TOKEN` remain on the Lemonade side.
 
-## How It Works
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `LEMONADE_PORT` | `13305` | Port the watchdog uses to talk to Lemonade. Lemonade itself reads its port from `config.json`; this only affects the watchdog. |
+| `LEMONADE_CACHE_DIR` | `/var/lib/lemonade/.cache/lemonade` | Where the watchdog looks for `keepalive_options.json`. |
+| `LEMONADE_CHECK_INTERVAL` | `30` | How often (seconds) the watchdog polls for idle models. |
+| `LEMONADE_KEEPALIVE_CONFIG` | unset | Explicit path to a config file. Highest priority in the search list. |
+| `LEMONADE_API_KEY` | unset | Forwarded to Lemonade for API authentication. |
+| `HF_TOKEN` | unset | Forwarded to Lemonade for gated model downloads. |
 
-### Idle Detection
+## How idle detection works
 
-Every 30 seconds the watchdog:
+The watchdog uses two independent signals to decide whether a model is in use:
 
-1. Queries Lemonade's `/api/v1/health` for loaded models and their `last_use` timestamps
-2. Compares `/stats` fingerprints to detect recently completed requests
-3. If a model exceeds its keepalive duration, begins pre-unload verification
+1. **Lemonade's `last_use` timestamp** for each loaded model, retrieved from `/api/v1/health`. Changes here indicate a request hit Lemonade since the last check.
+2. **llama-server's `/slots` endpoint**, which exposes per-slot `is_processing` flags. This catches in-flight inference that hasn't yet updated `last_use` (long generations, streaming responses, etc).
 
-### Pre-Unload Safety Checks
+Before unloading, the watchdog runs a three-stage safety check: confirm no slot is currently processing, re-fetch Lemonade health to make sure `last_use` hasn't moved, then sleep briefly and re-check both. Any sign of activity aborts the unload and resets the idle timer. This conservatism is intentional — false positives that interrupt a streaming response are much worse than holding a model in memory for an extra check cycle.
 
-Before unloading, the watchdog runs three checks to ensure no inference is in progress:
+The llama-server port is discovered automatically by scanning localhost listeners and probing each candidate for `/slots`. No assumption is made about which port llama-server will pick; it has been observed to walk forward (8001, 8002, ...) across reloads in v10.1.
 
-1. **Slot check** — queries the llama-server's `/slots` endpoint for `is_processing: true` on any slot
-2. **Fresh health check** — re-reads `last_use` from Lemonade to catch requests that just started
-3. **Wait and recheck** — waits 3 seconds, then rechecks both slots and stats
+## Limitations and gotchas
 
-If any check detects activity, the unload is aborted and the idle timer resets.
+- **llama-server-backed models only.** The slot-based activity check only works for models served by llama.cpp. Models served by other backends (whisper, sd, kokoro, etc.) fall back to `last_use` polling alone, which is less precise.
+- **No multi-model unload coordination.** Each loaded model is tracked independently. If two models are loaded simultaneously, they may unload in either order based on their own idle timers.
+- **Inside the container only.** The `/proc/net/tcp` scan looks at listeners inside the container's network namespace. If you run Lemonade with `network_mode: host`, the scan will see every listener on the host and may misidentify the llama-server port. The `/slots` probe usually disambiguates this correctly, but it's not guaranteed.
+- **Permissions on the bind mount.** Depending on how the deb package configures Lemonade's user inside the container, you may need to `chown` the host `./lemonade-cache` directory so Lemonade can write `config.json`. If the container fails to start with permission errors, that's almost always the cause.
 
-### Hot-Reload
+## Building
 
-The config file is re-read every 10 seconds (cached between checks). When a change is detected:
-
-- New keepalive durations take effect immediately
-- If the timeout was increased, a pending unload is aborted
-- If a model's keepalive was set to `0` or removed, tracking stops
-- Changes are logged with timestamps:
-  ```
-  2026-04-06 12:34:56.123 [Info] (IdleWatchdog) 'Qwen3.5-4B-GGUF' keep_alive changed: 2m -> 5m
-  ```
-
-### Port Discovery
-
-The llama-server runs on an internal port that isn't directly exposed by Lemonade. The watchdog discovers it by parsing `/proc/net/tcp` inside the container, filtering out known ports (Lemonade router, websocket). The discovered port is cached and invalidated when a model is unloaded.
-
-## GPU Support
-
-This image is configured for AMD ROCm GPUs. To use a different GPU backend, adjust the environment variables in `docker-compose.yml`:
-
-- **ROCm (AMD)**: Set `LEMONADE_LLAMACPP=rocm` and pass through `/dev/kfd` and `/dev/dri`
-- **Vulkan (generic GPU)**: Set `LEMONADE_LLAMACPP=vulkan`
-- **CPU only**: Remove GPU device mounts, Lemonade falls back to CPU automatically
-
-### Custom llama-server Binary
-
-To use your own llama-server build (e.g., a ROCm-optimized build):
-
-```yaml
-volumes:
-  - ./llamacpp:/backends
-environment:
-  - LEMONADE_LLAMACPP_ROCM_BIN=/backends/rocm/llama-server
+```bash
+docker compose build
+# or
+docker build --build-arg LEMONADE_VERSION=10.1.0 -t lemonade-server:10.1.0 .
 ```
 
-## Logs
+The Dockerfile is intentionally short — it installs the PPA, copies in two files, and exits. Everything substantive is in `auto_unload.py` and the upstream package.
 
-The watchdog logs meaningful events only — it's silent during normal polling:
+## Contributing
 
-```
-2026-04-06 12:34:56.123 [Info] (IdleWatchdog) starting (version: a1b2c3d4)
-2026-04-06 12:34:56.124 [Info] (IdleWatchdog) check interval: 30s, pre-unload wait: 3s
-2026-04-06 12:34:56.125 [Info] (IdleWatchdog) config file search paths:
-2026-04-06 12:34:56.125 [Info] (IdleWatchdog)   /root/.cache/lemonade/keepalive_options.json (found)
-2026-04-06 12:34:56.126 [Info] (IdleWatchdog) loaded keepalive config:
-2026-04-06 12:34:56.126 [Info] (IdleWatchdog)   _default: 10m
-2026-04-06 12:34:56.126 [Info] (IdleWatchdog)   Qwen3.5-35B-A3B-GGUF: 30m
-2026-04-06 12:34:56.127 [Info] (IdleWatchdog) tracking 'Qwen3.5-4B-GGUF' (keep_alive: 10m)
-2026-04-06 12:35:26.128 [Info] (IdleWatchdog) 'Qwen3.5-4B-GGUF' idle 30s, unload in 2m
-2026-04-06 12:36:00.129 [Info] (IdleWatchdog) 'Qwen3.5-4B-GGUF' idle 60s, unload in 1m
-2026-04-06 12:37:00.130 [Info] (IdleWatchdog) 'Qwen3.5-4B-GGUF' idle 120s, unloading... (keep_alive: 10m)
-2026-04-06 12:37:00.131 [Info] (IdleWatchdog)   'Qwen3.5-4B-GGUF' all clear, sending unload request
-2026-04-06 12:37:00.132 [Info] (IdleWatchdog)   'Qwen3.5-4B-GGUF' unloaded successfully
-```
+Issues and PRs welcome. The watchdog is small enough that a fix is usually a few lines; please include a snippet of the log output that shows the problem if you can.
 
-### Log Levels
+If you find a bug that's actually in upstream Lemonade rather than in this image, please report it at [lemonade-sdk/lemonade](https://github.com/lemonade-sdk/lemonade) instead — the maintainers there are responsive and the project moves fast.
 
-- **Startup**: Shows version hash, check interval, config paths, and loaded configuration
-- **Idle tracking**: Logs when a model starts idling and periodic progress updates
-- **Activity detection**: Resets idle timer when new requests arrive
-- **Unload events**: Pre-unload verification, aborts if activity detected, or success message
-- **Warnings**: Shows when llama-server port discovery or slot queries fail
-
-## Upstream
-
-This project adds keepalive functionality that Lemonade Server doesn't have natively. The infrastructure for it exists in Lemonade (per-model config via `recipe_options.json`, `last_use` tracking, `/api/v1/unload` endpoint) — it just needs a `keep_alive` field and idle eviction logic built in. If you'd like to see this upstream, consider voicing support on the [Lemonade GitHub](https://github.com/lemonade-sdk/lemonade).
 
 ## License
 
-Apache 2.0 — same as Lemonade Server.
+Apache License 2.0. See [LICENSE](./LICENSE).
 
-## Acknowledgments
-
-Huge thanks to the [Lemonade Team](https://github.com/lemonade-sdk/lemonade) for building what the AMD local AI community desperately needed.
+Lemonade Server is also Apache 2.0, licensed by AMD; see the [upstream repository](https://github.com/lemonade-sdk/lemonade) for details.
