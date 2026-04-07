@@ -1,8 +1,7 @@
 FROM ubuntu:24.04
-ARG LEMONADE_VERSION=10.0.1
+ARG LEMONADE_VERSION=10.1.0
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Runtime dependencies + software-properties-common for add-apt-repository
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
@@ -13,7 +12,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         software-properties-common \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Lemonade Server from PPA (v10.0.1+ moved from .deb to PPA)
 RUN add-apt-repository -y ppa:lemonade-team/stable \
     && apt-get update \
     && apt-get install -y lemonade-server=${LEMONADE_VERSION}* \
@@ -24,20 +22,25 @@ RUN add-apt-repository -y ppa:lemonade-team/stable \
 # Model storage and llama backend (mount from host)
 VOLUME ["/models", "/usr/local/share/lemonade-server/llama"]
 
-EXPOSE 8000
+# Lemonade cache dir on Linux — holds config.json and keepalive_options.json
+VOLUME ["/var/lib/lemonade/.cache/lemonade"]
 
-# Lemonade core config
+# Upstream defaults: 13305 = HTTP API, 9000 = websocket logs
+EXPOSE 13305 9000
+
 ENV HF_HOME=/models
-ENV LEMONADE_HOST=0.0.0.0
-ENV LEMONADE_PORT=8000
-ENV LEMONADE_LLAMACPP=rocm
+# LEMONADE_API_KEY / HF_TOKEN: set at runtime if needed
 
-# Idle model watchdog — reads config from /root/.cache/lemonade/keepalive_options.json
+# Watchdog needs to know where Lemonade lives and where its config is.
+# Default port matches upstream; override via compose if you remap.
+ENV LEMONADE_PORT=13305
+ENV LEMONADE_CACHE_DIR=/var/lib/lemonade/.cache/lemonade
+
 COPY auto_unload.py /opt/auto_unload.py
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD curl -f http://localhost:8000/live || exit 1
+    CMD curl -f http://localhost:13305/api/v1/health || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
