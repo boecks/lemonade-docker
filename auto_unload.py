@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Lemonade idle model unloader v3 — slot-aware with hot-reload config.
+Lemonade idle model unloader v2 — slot-aware with hot-reload config.
 
 Reads keepalive durations from a JSON config file on every check cycle,
 so you can change timeouts at runtime without restarting anything.
@@ -8,11 +8,7 @@ so you can change timeouts at runtime without restarting anything.
 Config file priority (first found wins):
   1. $LEMONADE_KEEPALIVE_CONFIG  (explicit path)
   2. $LEMONADE_CACHE_DIR/keepalive_options.json
-  3. $LEMONADE_CACHE_DIR/recipe_options.json
-  4. /var/lib/lemonade/.cache/lemonade/keepalive_options.json   (v10+ systemd default)
-  5. /var/lib/lemonade/.cache/lemonade/recipe_options.json
-  6. ~/.cache/lemonade/keepalive_options.json                   (legacy / non-systemd)
-  7. ~/.cache/lemonade/recipe_options.json
+  3. ~/.cache/lemonade/keepalive_options.json
 
 Config format (keepalive_options.json):
   {
@@ -108,7 +104,7 @@ def format_duration(secs):
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-LEMONADE_PORT   = int(os.environ.get("LEMONADE_PORT", "13305"))
+LEMONADE_PORT   = int(os.environ.get("LEMONADE_PORT", "8000"))
 URL             = f"http://127.0.0.1:{LEMONADE_PORT}"
 CHECK_INTERVAL  = int(os.environ.get("LEMONADE_CHECK_INTERVAL", "30"))
 PRE_UNLOAD_WAIT = 3
@@ -124,17 +120,9 @@ def find_config_paths():
     explicit = os.environ.get("LEMONADE_KEEPALIVE_CONFIG")
     if explicit:
         paths.append(explicit)
-    cache_dir = os.environ.get("LEMONADE_CACHE_DIR")
-    if cache_dir:
-        paths.append(os.path.join(cache_dir, "keepalive_options.json"))
-        paths.append(os.path.join(cache_dir, "recipe_options.json"))
-    # v10+ default Linux systemd cache dir
-    paths.append("/var/lib/lemonade/.cache/lemonade/keepalive_options.json")
-    paths.append("/var/lib/lemonade/.cache/lemonade/recipe_options.json")
-    # legacy / non-systemd default
-    legacy = os.path.expanduser("~/.cache/lemonade")
-    paths.append(os.path.join(legacy, "keepalive_options.json"))
-    paths.append(os.path.join(legacy, "recipe_options.json"))
+    cache_dir = os.environ.get("LEMONADE_CACHE_DIR", os.path.expanduser("~/.cache/lemonade"))
+    paths.append(os.path.join(cache_dir, "keepalive_options.json"))
+    paths.append(os.path.join(cache_dir, "recipe_options.json"))
     return paths
 
 CONFIG_PATHS = find_config_paths()
@@ -222,8 +210,6 @@ def api(path, data=None, timeout=5):
 # llama-server port discovery via /proc/net/tcp
 # ---------------------------------------------------------------------------
 def discover_llamaserver_port():
-    """Find the llama-server port by scanning localhost listeners and probing
-    each candidate for the /slots endpoint. No assumption about port numbering."""
     try:
         with open("/proc/net/tcp", "r") as f:
             lines = f.readlines()[1:]
@@ -242,15 +228,9 @@ def discover_llamaserver_port():
     candidates = [p for p in localhost_listeners if p not in exclude]
     if len(candidates) == 1:
         return candidates[0]
-    if len(candidates) > 1:
-        # Multiple candidates — probe each for llama-server's /slots endpoint
-        # and return the first that responds. /slots is llama-server-specific
-        # so this won't false-positive on other localhost services.
-        for p in candidates:
-            if http_get_json(f"http://127.0.0.1:{p}/slots") is not None:
-                return p
-        log(f"multiple localhost listeners but none respond to /slots: {candidates}")
-        return None
+    elif len(candidates) > 1:
+        candidates.sort(key=lambda p: abs(p - (LEMONADE_PORT + 1)))
+        return candidates[0]
     return None
 
 _cached_llama_port = None
@@ -320,7 +300,6 @@ def init_exclude_ports():
 def run():
     log(f"starting (version: {script_hash()})")
     log(f"check interval: {CHECK_INTERVAL}s, pre-unload wait: {PRE_UNLOAD_WAIT}s")
-    log(f"lemonade endpoint: {URL}")
     log(f"env fallback LEMONADE_KEEPALIVE: {format_duration(ENV_DEFAULT) if ENV_DEFAULT is not None else 'not set'}")
     log(f"config file search paths:")
     for p in CONFIG_PATHS:
