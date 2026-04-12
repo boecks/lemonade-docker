@@ -1,3 +1,6 @@
+![build](https://github.com/boecks/lemonade-docker/actions/workflows/build.yml/badge.svg)
+![release](https://github.com/boecks/lemonade-docker/actions/workflows/release.yml/badge.svg)
+
 # lemonade-docker
 
 An unofficial container image for [Lemonade Server](https://github.com/lemonade-sdk/lemonade) with a side-car watchdog that unloads idle models on a configurable per-model schedule.
