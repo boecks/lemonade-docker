@@ -1,5 +1,5 @@
 FROM ubuntu:24.04
-ARG LEMONADE_VERSION=10.2.0
+ARG LEMONADE_VERSION=10.3.0
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
