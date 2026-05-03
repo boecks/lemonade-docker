@@ -1,36 +1,24 @@
-FROM ubuntu:26.04
+FROM fedora:43
 ARG LEMONADE_VERSION=10.3.0
-ENV DEBIAN_FRONTEND=noninteractive
 
-# Runtime deps + rpm2cpio for extraction.
-# rpm2cpio is provided by the rpm2cpio package on noble.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Runtime deps not pulled in by the lemonade-server RPM itself.
+# moreutils for `ts` (timestamps in logs, if your watchdog uses it).
+# python3 for the auto_unload.py watchdog.
+# curl for the healthcheck.
+# ca-certificates implicit on Fedora but harmless to be explicit.
+RUN dnf install -y --setopt=install_weak_deps=False \
         ca-certificates \
-        cpio \
         curl \
-        rpm2cpio \
-        libgomp1 \
-        libatomic1 \
         moreutils \
         python3 \
-    && rm -rf /var/lib/apt/lists/*
+    && dnf clean all
 
-# Fetch the RPM from GitHub releases and extract its payload onto the
-# filesystem. RPM payload uses absolute paths (./opt/..., ./usr/...) which
-# cpio recreates verbatim. We strip the leading "." so files land at
-# /opt/... and /usr/... as the packaging team intended.
-RUN curl -fsSL -o /tmp/lemonade.rpm \
+# Install the RPM directly from GitHub releases. dnf resolves runtime deps
+# (libwebsockets, libgomp, etc.) from Fedora repos automatically. The RPM's
+# postinst script runs and creates the expected symlinks.
+RUN dnf install -y \
       "https://github.com/lemonade-sdk/lemonade/releases/download/v${LEMONADE_VERSION}/lemonade-server-${LEMONADE_VERSION}.x86_64.rpm" \
-    && cd / \
-    && rpm2cpio /tmp/lemonade.rpm | cpio -idmv \
-    && rm /tmp/lemonade.rpm
-
-# After extraction, the apt-installed packages we no longer need can go.
-# rpm2cpio + cpio were just for unpacking, and they pulled in some perl/python
-# bits as deps. Trim them to keep the image smaller.
-RUN apt-get purge -y rpm2cpio cpio \
-    && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
+    && dnf clean all
 
 ENV HF_HOME=/models
 ENV LEMONADE_PORT=13305
