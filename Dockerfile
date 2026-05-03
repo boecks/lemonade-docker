@@ -1,5 +1,5 @@
 FROM fedora:44
-ARG LEMONADE_VERSION=10.3.0
+ARG LEMONADE_VERSION=10.2.0
 
 RUN dnf install -y \
         --setopt=install_weak_deps=False \
