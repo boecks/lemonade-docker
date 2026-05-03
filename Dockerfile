@@ -1,4 +1,4 @@
-FROM fedora:45
+FROM fedora:44
 ARG LEMONADE_VERSION=10.3.0
 
 RUN dnf install -y \
