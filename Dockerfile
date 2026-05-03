@@ -1,4 +1,4 @@
-FROM fedora:44
+FROM fedora:45
 ARG LEMONADE_VERSION=10.3.0
 
 # Runtime deps not pulled in by the lemonade-server RPM itself.
