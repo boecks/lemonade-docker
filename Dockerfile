@@ -3,7 +3,7 @@ ARG LEMONADE_VERSION=10.3.0
 # Signing key fingerprint for the lemonade-team/stable PPA.
 # Get this from: https://launchpad.net/~lemonade-team/+archive/ubuntu/stable
 # (expand "Technical details about this PPA" → "Signing key")
-ARG LEMONADE_PPA_KEY_FP=REPLACE_WITH_FINGERPRINT
+ARG LEMONADE_PPA_KEY_FP=881CF4B40B0BFA288D6776E83BF36CFA0BD50AEC
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
