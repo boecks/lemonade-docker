@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 ARG LEMONADE_VERSION=10.3.0
 ENV DEBIAN_FRONTEND=noninteractive
 
