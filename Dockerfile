@@ -1,29 +1,33 @@
-FROM ubuntu:26.04
+FROM ubuntu:24.04
 ARG LEMONADE_VERSION=10.3.0
+# Signing key fingerprint for the lemonade-team/stable PPA.
+# Get this from: https://launchpad.net/~lemonade-team/+archive/ubuntu/stable
+# (expand "Technical details about this PPA" → "Signing key")
+ARG LEMONADE_PPA_KEY_FP=REPLACE_WITH_FINGERPRINT
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        gnupg \
         libgomp1 \
         libatomic1 \
         moreutils \
         python3 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL -o /tmp/lemonade.tar.gz \
-      "https://github.com/lemonade-sdk/lemonade/releases/download/v${LEMONADE_VERSION}/lemonade-embeddable-${LEMONADE_VERSION}-ubuntu-x64.tar.gz" \
-    && mkdir -p /opt/lemonade \
-    && tar -xzf /tmp/lemonade.tar.gz -C /opt/lemonade --strip-components=1 \
-    && rm /tmp/lemonade.tar.gz \
-    && ln -s /opt/lemonade/lemond    /usr/local/bin/lemond \
-    && ln -s /opt/lemonade/lemonade  /usr/local/bin/lemonade
-
-RUN mkdir -p /opt/lemonade/resources/static \
-    && curl -fsSL -o /opt/lemonade/resources/static/index.html \
-        "https://raw.githubusercontent.com/lemonade-sdk/lemonade/v${LEMONADE_VERSION}/src/cpp/resources/static/index.html" \
-    && curl -fsSL -o /opt/lemonade/resources/static/favicon.ico \
-        "https://raw.githubusercontent.com/lemonade-sdk/lemonade/v${LEMONADE_VERSION}/src/cpp/resources/static/favicon.ico"
+# Set up the PPA manually — no add-apt-repository, no Launchpad API call.
+# Fetch the key directly from keyserver.ubuntu.com with a hard timeout.
+RUN install -d /etc/apt/keyrings \
+    && curl -fsSL --max-time 30 \
+        "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${LEMONADE_PPA_KEY_FP}" \
+        | gpg --dearmor -o /etc/apt/keyrings/lemonade-team.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/lemonade-team.gpg] https://ppa.launchpadcontent.net/lemonade-team/stable/ubuntu noble main" \
+        > /etc/apt/sources.list.d/lemonade-team.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        lemonade-server=${LEMONADE_VERSION}* \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV HF_HOME=/models
 ENV LEMONADE_PORT=13305
