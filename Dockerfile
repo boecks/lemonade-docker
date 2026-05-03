@@ -12,6 +12,8 @@ RUN dnf install -y \
     && rm -rf /var/cache/dnf /var/log/dnf* /usr/share/doc /usr/share/man /usr/share/info
 
 ENV HF_HOME=/models
+ENV LEMONADE_PORT=13305
+ENV LEMONADE_CACHE_DIR=/var/lib/lemonade/.cache/lemonade
 
 COPY auto_unload.py /opt/auto_unload.py
 COPY entrypoint.sh  /entrypoint.sh
