@@ -1,32 +1,35 @@
 FROM ubuntu:24.04
 ARG LEMONADE_VERSION=10.3.0
-# Signing key fingerprint for the lemonade-team/stable PPA.
-# Get this from: https://launchpad.net/~lemonade-team/+archive/ubuntu/stable
-# (expand "Technical details about this PPA" → "Signing key")
-ARG LEMONADE_PPA_KEY_FP=881CF4B40B0BFA288D6776E83BF36CFA0BD50AEC
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Runtime deps + rpm2cpio for extraction.
+# rpm2cpio is provided by the rpm2cpio package on noble.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
+        cpio \
         curl \
-        gnupg \
+        rpm2cpio \
         libgomp1 \
         libatomic1 \
         moreutils \
         python3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Set up the PPA manually — no add-apt-repository, no Launchpad API call.
-# Fetch the key directly from keyserver.ubuntu.com with a hard timeout.
-RUN install -d /etc/apt/keyrings \
-    && curl -fsSL --max-time 30 \
-        "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${LEMONADE_PPA_KEY_FP}" \
-        | gpg --dearmor -o /etc/apt/keyrings/lemonade-team.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/lemonade-team.gpg] https://ppa.launchpadcontent.net/lemonade-team/stable/ubuntu noble main" \
-        > /etc/apt/sources.list.d/lemonade-team.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-        lemonade-server=${LEMONADE_VERSION}* \
+# Fetch the RPM from GitHub releases and extract its payload onto the
+# filesystem. RPM payload uses absolute paths (./opt/..., ./usr/...) which
+# cpio recreates verbatim. We strip the leading "." so files land at
+# /opt/... and /usr/... as the packaging team intended.
+RUN curl -fsSL -o /tmp/lemonade.rpm \
+      "https://github.com/lemonade-sdk/lemonade/releases/download/v${LEMONADE_VERSION}/lemonade-server-${LEMONADE_VERSION}.x86_64.rpm" \
+    && cd / \
+    && rpm2cpio /tmp/lemonade.rpm | cpio -idmv \
+    && rm /tmp/lemonade.rpm
+
+# After extraction, the apt-installed packages we no longer need can go.
+# rpm2cpio + cpio were just for unpacking, and they pulled in some perl/python
+# bits as deps. Trim them to keep the image smaller.
+RUN apt-get purge -y rpm2cpio cpio \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 ENV HF_HOME=/models
