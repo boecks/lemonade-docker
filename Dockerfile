@@ -19,6 +19,12 @@ RUN curl -fsSL -o /tmp/lemonade.tar.gz \
     && ln -s /opt/lemonade/lemond    /usr/local/bin/lemond \
     && ln -s /opt/lemonade/lemonade  /usr/local/bin/lemonade
 
+RUN mkdir -p /opt/lemonade/resources/static \
+    && curl -fsSL -o /opt/lemonade/resources/static/index.html \
+        "https://raw.githubusercontent.com/lemonade-sdk/lemonade/v${LEMONADE_VERSION}/src/cpp/resources/static/index.html" \
+    && curl -fsSL -o /opt/lemonade/resources/static/favicon.ico \
+        "https://raw.githubusercontent.com/lemonade-sdk/lemonade/v${LEMONADE_VERSION}/src/cpp/resources/static/favicon.ico"
+
 ENV HF_HOME=/models
 ENV LEMONADE_PORT=13305
 ENV LEMONADE_CACHE_DIR=/var/lib/lemonade/.cache/lemonade
