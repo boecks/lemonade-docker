@@ -1,25 +1,12 @@
-FROM fedora:44
-ARG LEMONADE_VERSION=10.2.0
+FROM ghcr.io/lemonade-sdk/lemonade-server:v10.3.0
 
-RUN dnf install -y \
-        --setopt=install_weak_deps=False \
-        --setopt=tsflags=nodocs \
-        ca-certificates curl python3 \
-    && dnf install -y \
-        --setopt=tsflags=nodocs \
-        "https://github.com/lemonade-sdk/lemonade/releases/download/v${LEMONADE_VERSION}/lemonade-server-${LEMONADE_VERSION}.x86_64.rpm" \
-    && dnf clean all \
-    && rm -rf /var/cache/dnf /var/log/dnf* /usr/share/doc /usr/share/man /usr/share/info
-
-ENV HF_HOME=/models
-ENV LEMONADE_PORT=13305
-ENV LEMONADE_CACHE_DIR=/var/lib/lemonade/.cache/lemonade
+# Runtime dep for the watchdog
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY auto_unload.py /opt/auto_unload.py
-COPY entrypoint.sh  /entrypoint.sh
+COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD curl -f http://localhost:13305/api/v1/health || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
