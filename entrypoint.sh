@@ -1,9 +1,7 @@
 #!/bin/bash
 set -e
-
 CACHE=/var/lib/lemonade/.cache/lemonade
 BACKEND=/backends/rocm
-
 mkdir -p "$CACHE"
 
 if [ -f "$CACHE/config.json" ]; then
@@ -12,15 +10,18 @@ import json, pathlib
 p = pathlib.Path('$CACHE/config.json')
 c = json.loads(p.read_text())
 c.setdefault('llamacpp', {})
-c['llamacpp']['rocm_bin'] = '$BACKEND'   # leave it set, in case it ever gets honored
-c['no_fetch_executables'] = True          # keep fetch disabled
-c.pop('rocm_channel', None)               # let it fall through to default
+c['llamacpp']['rocm_bin'] = '$BACKEND'
+c['no_fetch_executables'] = True
+c.pop('rocm_channel', None)
 p.write_text(json.dumps(c, indent=2))
 print(f'patched: rocm_bin={c[\"llamacpp\"][\"rocm_bin\"]}, fetch disabled, channel removed')
 "
 fi
 
-# Symlink ALL channel cache dirs to the backend so whichever Lemonade picks, ours wins.
+# Drop a marker file so Lemonade thinks the install is complete.
+# Use a value that looks like a real upstream tag.
+[ -f "$BACKEND/version.txt" ] || echo "b9999" > "$BACKEND/version.txt"
+
 mkdir -p "$CACHE/bin/llamacpp"
 cd "$CACHE/bin/llamacpp"
 for d in rocm rocm-stable rocm-nightly rocm-preview; do
