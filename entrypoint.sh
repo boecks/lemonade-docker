@@ -1,31 +1,24 @@
 #!/bin/bash
 set -e
 CACHE=/var/lib/lemonade/.cache/lemonade
-BACKEND=/backends/rocm
 
-# Patch config (no_fetch=true, channel left alone since we have a real install)
+# Reset config to defaults that allow fetch
 if [ -f "$CACHE/config.json" ]; then
   python3 -c "
 import json, pathlib
 p = pathlib.Path('$CACHE/config.json')
 c = json.loads(p.read_text())
-c['no_fetch_executables'] = True
+c['no_fetch_executables'] = False
+c['offline'] = False
+c.pop('rocm_channel', None)
+# Force nightly since per your issue, that's the only working channel for gfx1201
+c['rocm_channel'] = 'nightly'
+c.setdefault('llamacpp', {})
+c['llamacpp']['rocm_bin'] = 'builtin'   # let lemonade manage
 p.write_text(json.dumps(c, indent=2))
+print('config reset for bootstrap fetch')
 "
 fi
-
-# Replace just llama-server in whichever channels Lemonade has populated
-for d in "$CACHE/bin/llamacpp"/rocm*; do
-  [ -d "$d" ] || continue
-  # Only replace if it's a real file, not already a symlink
-  if [ -f "$d/llama-server" ] && [ ! -L "$d/llama-server" ]; then
-    mv "$d/llama-server" "$d/llama-server.orig"
-    ln -sfn "$BACKEND/llama-server" "$d/llama-server"
-    echo "swapped llama-server in $d"
-  fi
-done
-
-export LD_LIBRARY_PATH="$BACKEND${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 python3 /opt/auto_unload.py &
 exec /opt/lemonade/lemond --host 0.0.0.0
