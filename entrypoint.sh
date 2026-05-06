@@ -2,35 +2,30 @@
 set -e
 CACHE=/var/lib/lemonade/.cache/lemonade
 BACKEND=/backends/rocm
-mkdir -p "$CACHE"
 
+# Patch config (no_fetch=true, channel left alone since we have a real install)
 if [ -f "$CACHE/config.json" ]; then
   python3 -c "
 import json, pathlib
 p = pathlib.Path('$CACHE/config.json')
 c = json.loads(p.read_text())
-c.setdefault('llamacpp', {})
-c['llamacpp']['rocm_bin'] = '$BACKEND'
 c['no_fetch_executables'] = True
-c.pop('rocm_channel', None)
 p.write_text(json.dumps(c, indent=2))
-print(f'patched: rocm_bin={c[\"llamacpp\"][\"rocm_bin\"]}, fetch disabled, channel removed')
 "
 fi
 
-# Drop a marker file so Lemonade thinks the install is complete.
-# Use a value that looks like a real upstream tag.
-[ -f "$BACKEND/version.txt" ] || echo "b9999" > "$BACKEND/version.txt"
-
-mkdir -p "$CACHE/bin/llamacpp"
-cd "$CACHE/bin/llamacpp"
-for d in rocm rocm-stable rocm-nightly rocm-preview; do
-  if [ -L "$d" ] || [ -d "$d" ]; then
-    rm -rf "$d"
+# Replace just llama-server in whichever channels Lemonade has populated
+for d in "$CACHE/bin/llamacpp"/rocm*; do
+  [ -d "$d" ] || continue
+  # Only replace if it's a real file, not already a symlink
+  if [ -f "$d/llama-server" ] && [ ! -L "$d/llama-server" ]; then
+    mv "$d/llama-server" "$d/llama-server.orig"
+    ln -sfn "$BACKEND/llama-server" "$d/llama-server"
+    echo "swapped llama-server in $d"
   fi
-  ln -sfn "$BACKEND" "$d"
-  echo "linked $d -> $BACKEND"
 done
+
+export LD_LIBRARY_PATH="$BACKEND${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 python3 /opt/auto_unload.py &
 exec /opt/lemonade/lemond --host 0.0.0.0
