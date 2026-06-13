@@ -1,4 +1,4 @@
-FROM ghcr.io/lemonade-sdk/lemonade-server:v10.5.1
+FROM ghcr.io/lemonade-sdk/lemonade-server:v10.7.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 \
